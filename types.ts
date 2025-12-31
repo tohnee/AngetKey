@@ -6,7 +6,7 @@ export interface Coordinates {
 
 export enum AgentMode {
   IDLE = 'IDLE',
-  LISTENING = 'LISTENING', // Triggered by //
+  LISTENING = 'LISTENING',
   THINKING = 'THINKING',
   STREAMING = 'STREAMING',
   DONE = 'DONE',
@@ -14,8 +14,26 @@ export enum AgentMode {
 }
 
 export interface AgentResponse {
-  text: string;
+  text?: string;
+  images?: string[]; // Base64 strings
   groundingUrls?: string[];
+}
+
+export interface AgentPersona {
+  id: string;
+  name: string;
+  description: string;
+  systemInstruction: string;
+  model: string;
+  tools?: string[]; // 'googleSearch', etc.
+  type: 'text' | 'image';
+}
+
+export interface MemorySlot {
+  id: string;
+  content: string;
+  timestamp: number;
+  sourceAgent: string;
 }
 
 export interface EditorContext {
@@ -28,5 +46,7 @@ export enum CommandType {
   FIX = 'fix',
   ASK = 'ask',
   POLITE = 'polite',
-  GENERAL = 'general'
+  MEME = 'meme',
+  GENERAL = 'general',
+  SAVE = 'save'
 }

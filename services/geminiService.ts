@@ -1,49 +1,121 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { AgentResponse, CommandType } from '../types';
+import { GoogleGenAI } from "@google/genai";
+import { AgentResponse, AgentPersona } from '../types';
 
-// Using process.env.API_KEY as per strict instructions.
-// In a real local-first desktop app, this would be loaded from user config.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+export const AGENT_REGISTRY: Record<string, AgentPersona> = {
+  default: {
+    id: 'default',
+    name: 'General',
+    description: 'Helpful Assistant',
+    systemInstruction: 'You are AgentKey. Be concise and helpful.',
+    model: 'gemini-3-flash-preview',
+    type: 'text'
+  },
+  coder: {
+    id: 'coder',
+    name: 'DevBox',
+    description: 'Senior Engineer',
+    systemInstruction: 'You are a Senior Software Engineer. Provide efficient, clean, and modern code solutions. Analyze bugs deeply.',
+    model: 'gemini-3-pro-preview',
+    type: 'text'
+  },
+  writer: {
+    id: 'writer',
+    name: 'CopyEditor',
+    description: 'Content Polisher',
+    systemInstruction: 'You are a professional editor. Improve grammar, tone, and clarity. Make the text engaging.',
+    model: 'gemini-3-flash-preview',
+    type: 'text'
+  },
+  researcher: {
+    id: 'researcher',
+    name: 'Search',
+    description: 'Web Researcher',
+    systemInstruction: 'You are a researcher. Use Google Search to find facts.',
+    model: 'gemini-3-pro-preview',
+    tools: ['googleSearch'],
+    type: 'text'
+  },
+  memer: {
+    id: 'memer',
+    name: 'MemeGen',
+    description: 'Visual Artist',
+    systemInstruction: 'You are a creative visual artist. Create funny or relevant images based on the text.',
+    model: 'gemini-2.5-flash-image',
+    type: 'image'
+  }
+};
 
 export const generateAgentResponse = async (
   prompt: string,
   context: string,
-  commandType: CommandType,
+  savedMemory: string | null,
+  agentId: string,
   onStream: (chunk: string) => void
 ): Promise<AgentResponse> => {
   
-  let modelName = 'gemini-3-flash-preview';
-  let systemInstruction = `You are AgentKey, a cursor-anchored AI assistant. 
-  Output ONLY the requested code or text transformation without markdown fences if possible, 
-  unless specifically asked for explanation. Your goal is to be pasted directly into an editor.
+  const agent = AGENT_REGISTRY[agentId] || AGENT_REGISTRY.default;
   
-  Context from editor:
-  ${context}`;
+  // Construct the full prompt context
+  let fullContext = `Context from editor:\n${context}`;
+  if (savedMemory) {
+    fullContext += `\n\n[PRIOR SAVED CONTEXT/MEMORY]:\n${savedMemory}\n(Use this information to inform your response)`;
+  }
 
+  // Handle Image Generation
+  if (agent.type === 'image') {
+    try {
+      // For image generation, we use generateContent but extract inlineData
+      const response = await ai.models.generateContent({
+        model: agent.model,
+        contents: {
+          parts: [{ text: `Generate an image based on this context and prompt: ${prompt}. Context: ${context}` }]
+        }
+        // Note: No responseMimeType for nano banana models (gemini-2.5-flash-image)
+      });
+
+      const images: string[] = [];
+      let text = "";
+
+      if (response.candidates?.[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            images.push(part.inlineData.data);
+          } else if (part.text) {
+            text += part.text;
+          }
+        }
+      }
+      
+      return { text, images };
+    } catch (e) {
+      console.error("Image Gen Error", e);
+      throw e;
+    }
+  }
+
+  // Handle Text/Thinking/Search Generation
   let tools: any[] = [];
   let thinkingConfig = undefined;
 
-  // Configuration based on command type (PRD Logic + Gemini Guidelines)
-  
-  if (commandType === CommandType.FIX) {
-    // Complex reasoning for code fixing -> Use Thinking Mode
-    modelName = 'gemini-3-pro-preview';
-    thinkingConfig = { thinkingBudget: 32768 }; 
-    systemInstruction += "\nAnalyze the code logic deeply before providing a fix.";
-  } else if (commandType === CommandType.ASK) {
-    // Knowledge retrieval -> Use Search Grounding
-    modelName = 'gemini-3-flash-preview';
-    tools = [{ googleSearch: {} }];
-    systemInstruction += "\nUse Google Search to provide up-to-date answers.";
+  if (agent.tools?.includes('googleSearch')) {
+    tools.push({ googleSearch: {} });
   }
+
+  if (agent.model === 'gemini-3-pro-preview' && !agent.tools?.length) {
+    thinkingConfig = { thinkingBudget: 1024 }; // Enable thinking for Pro coder
+  }
+
+  const systemInstruction = `${agent.systemInstruction}\nOutput ONLY the requested content directly usable in the editor.`;
 
   try {
     const stream = await ai.models.generateContentStream({
-      model: modelName,
-      contents: prompt,
+      model: agent.model,
+      contents: `Prompt: ${prompt}\n\n${fullContext}`,
       config: {
         systemInstruction,
-        thinkingConfig, // Only valid for gemini-3-pro-preview
+        thinkingConfig,
         tools: tools.length > 0 ? tools : undefined,
       },
     });
@@ -52,7 +124,7 @@ export const generateAgentResponse = async (
     let groundingUrls: string[] = [];
 
     for await (const chunk of stream) {
-      // Check for grounding chunks to extract URLs
+      // Extract grounding
       if (chunk.candidates?.[0]?.groundingMetadata?.groundingChunks) {
         chunk.candidates[0].groundingMetadata.groundingChunks.forEach((c: any) => {
           if (c.web?.uri) {
