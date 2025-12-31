@@ -1,0 +1,5 @@
+{
+  "name": "AgentKey Web Playground",
+  "description": "A web-based playground for the AgentKey Open Source AI Cursor Shell. Experience the cursor-anchored overlay and AI command workflow directly in your browser.",
+  "requestFramePermissions": []
+}
